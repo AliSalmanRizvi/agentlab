@@ -11,7 +11,7 @@ import base64
 import io
 from pathlib import Path
 from PIL import Image
-from drivers_license_scanner import DriversLicenseScanner
+from .scanner import DriversLicenseScanner
 import logging
 
 logger = logging.getLogger(__name__)

@@ -3,7 +3,13 @@
 Test Connecticut license number extraction specifically
 """
 
-from drivers_license_scanner import DriversLicenseScanner
+import sys
+import os
+
+# Add the src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from license_scanner.scanner import DriversLicenseScanner
 
 def test_ct_extraction():
     """Test Connecticut license number extraction"""

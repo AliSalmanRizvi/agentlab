@@ -8,8 +8,14 @@ by mocking the Textract service for demonstration purposes.
 
 import json
 import base64
+import sys
+import os
 from unittest.mock import Mock, patch
-from drivers_license_scanner import DriversLicenseScanner, LicenseInfo
+
+# Add the src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from license_scanner.scanner import DriversLicenseScanner, LicenseInfo
 
 def create_mock_textract_response():
     """Create a mock AWS Textract response for testing"""

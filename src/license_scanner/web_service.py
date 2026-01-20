@@ -7,7 +7,7 @@ Provides REST API endpoints for scanning licenses.
 """
 
 from flask import Flask, request, jsonify, render_template_string
-from license_scanner_api import LicenseScannerAPI
+from .api import LicenseScannerAPI
 import base64
 import os
 import logging
