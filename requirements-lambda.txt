@@ -1,0 +1,4 @@
+# AWS Lambda requirements
+# Note: boto3 is already available in Lambda runtime
+Pillow==10.0.0
+requests==2.31.0
