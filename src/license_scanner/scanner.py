@@ -313,7 +313,11 @@ class DriversLicenseScanner:
     
     def extract_names(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        Extract first name and last name from license text
+        Extract first name and last name from license text using field codes
+        
+        Driver's licenses use standardized field codes:
+        - Field 1: Last name
+        - Field 2: First name
         
         Args:
             text: Extracted text from license
@@ -324,53 +328,293 @@ class DriversLicenseScanner:
         text_upper = text.upper()
         lines = text_upper.split('\n')
         
-        # Common name patterns and prefixes
+        first_name = None
+        last_name = None
+        
+        # Method 1: Look for field codes on same line as names
+        for line in lines:
+            line = line.strip()
+            
+            # Check for field 1 (last name) - same line
+            if re.search(r'\b1[:\s]', line):
+                match = re.search(r'\b1[:\s]+([A-Z][A-Z\s\-\']+?)(?=\s+\d|\s*$)', line)
+                if match:
+                    candidate = match.group(1).strip()
+                    if self._is_valid_name_field(candidate):
+                        last_name = candidate
+            
+            # Check for field 2 (first name) - same line
+            if re.search(r'\b2[:\s]', line):
+                match = re.search(r'\b2[:\s]+([A-Z][A-Z\s\-\']+?)(?=\s+\d|\s*$)', line)
+                if match:
+                    candidate = match.group(1).strip()
+                    if self._is_valid_name_field(candidate):
+                        first_name = candidate
+        
+        # Method 2: Look for field codes that might be on separate lines
+        # Check for patterns like "1" followed by name on next line(s)
+        for i, line in enumerate(lines):
+            line = line.strip()
+            
+            # Look for standalone field numbers
+            if line == '1' and i + 1 < len(lines):
+                # Check next line for last name
+                next_line = lines[i + 1].strip()
+                if next_line and self._is_valid_name_field(next_line):
+                    last_name = next_line
+            
+            elif line == '2' and i + 1 < len(lines):
+                # Check next line for first name
+                next_line = lines[i + 1].strip()
+                if next_line and self._is_valid_name_field(next_line):
+                    first_name = next_line
+        
+        # Method 3: Look for field codes at the beginning of lines
+        for line in lines:
+            line = line.strip()
+            
+            # Field 1 at start of line
+            if re.match(r'^1[:\s]*$', line):
+                continue  # This is handled by method 2
+            elif re.match(r'^1[:\s]+', line):
+                match = re.search(r'^1[:\s]+([A-Z][A-Z\s\-\']+?)(?=\s*$)', line)
+                if match and not last_name:
+                    candidate = match.group(1).strip()
+                    if self._is_valid_name_field(candidate):
+                        last_name = candidate
+            
+            # Field 2 at start of line
+            elif re.match(r'^2[:\s]*$', line):
+                continue  # This is handled by method 2
+            elif re.match(r'^2[:\s]+', line):
+                match = re.search(r'^2[:\s]+([A-Z][A-Z\s\-\']+?)(?=\s*$)', line)
+                if match and not first_name:
+                    candidate = match.group(1).strip()
+                    if self._is_valid_name_field(candidate):
+                        first_name = candidate
+        
+        # If we found both using field codes, return them
+        if first_name and last_name:
+            return first_name, last_name
+        
+        # Method 4: Fallback to previous logic if field codes not found
+        # This handles cases where OCR might not capture the field numbers clearly
+        fallback_first, fallback_last = self._extract_names_fallback(text)
+        
+        # Use field code results if available, otherwise use fallback
+        return (first_name or fallback_first, last_name or fallback_last)
+    
+    def _is_valid_name_field(self, name_text: str) -> bool:
+        """Validate if text from a field code looks like a valid name"""
+        if not name_text or len(name_text) < 2:
+            return False
+        
+        # Must contain at least one letter
+        if not re.search(r'[A-Z]', name_text):
+            return False
+        
+        # Should not be too long (names are typically under 30 characters)
+        if len(name_text) > 30:
+            return False
+        
+        # Should not contain numbers
+        if re.search(r'\d', name_text):
+            return False
+        
+        # Should have reasonable word count (1-3 words for a name field)
+        words = name_text.split()
+        if len(words) < 1 or len(words) > 3:
+            return False
+        
+        # Each word should be reasonable for a name
+        for word in words:
+            if len(word) < 1:
+                return False
+            # Skip words that are too long to be names
+            if len(word) > 20:
+                return False
+        
+        # Skip obvious license-related terms that might appear in fields
+        license_terms = {
+            'LICENSE', 'DRIVER', 'CLASS', 'EXPIRES', 'DOB', 'LIC', 'ID',
+            'DOCUMENT', 'ISSUED', 'VALID', 'UNTIL', 'RENEWAL', 'FEE',
+            'RESTRICTIONS', 'ENDORSEMENTS', 'NONE', 'CORRECTIVE', 'LENSES'
+        }
+        
+        # Check if any word is a license term
+        for word in words:
+            if word in license_terms:
+                return False
+        
+        # Should not be all the same character
+        if len(set(name_text.replace(' ', ''))) <= 1:
+            return False
+        
+        return True
+    
+    def _extract_names_fallback(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Fallback name extraction method (previous logic)
+        Used when field codes are not found
+        """
+        text_upper = text.upper()
+        lines = text_upper.split('\n')
+        
+        # Method 1: Look for explicit name patterns with labels
         name_patterns = [
-            r'NAME[:\s]+([A-Z\s]+?)(?:\n|$)',
-            r'FULL\s*NAME[:\s]+([A-Z\s]+?)(?:\n|$)',
-            r'DRIVER[:\s]+([A-Z\s]+?)(?:\n|$)',
-            r'LICENSEE[:\s]+([A-Z\s]+?)(?:\n|$)',
+            r'(?:FULL\s*)?NAME[:\s]+([A-Z][A-Z\s]+?)(?=\s*(?:LIC|DOB|CLASS|EXPIRES|ADDRESS|\d|\n|$))',
+            r'(?:DRIVER|LICENSEE)[:\s]+([A-Z][A-Z\s]+?)(?=\s*(?:LIC|DOB|CLASS|EXPIRES|ADDRESS|\d|\n|$))',
         ]
         
-        # Look for explicit name patterns first
         for pattern in name_patterns:
             matches = re.findall(pattern, text_upper, re.MULTILINE)
             if matches:
                 name_text = matches[0].strip()
-                # Remove any trailing keywords that might have been captured
-                name_words = name_text.split()
-                clean_words = []
-                for word in name_words:
-                    if word not in {'LIC', 'LICENSE', 'DOB', 'CLASS', 'EXPIRES', 'STATE', 'CT', 'CA', 'TX', 'FL', 'NY'}:
-                        clean_words.append(word)
-                    else:
-                        break  # Stop at first keyword
-                
-                if clean_words and self._is_valid_name(' '.join(clean_words)):
-                    return self._parse_name(' '.join(clean_words))
+                if self._is_basic_valid_name(name_text):
+                    return self._parse_name(name_text)
         
-        # Look for name-like patterns in lines
-        # Names are typically on lines with mostly alphabetic characters
+        # Method 2: Look for name-like lines (typically appear early in license)
         potential_names = []
         
-        for line in lines:
+        for i, line in enumerate(lines):
             line = line.strip()
-            if self._looks_like_name_line(line):
-                potential_names.append(line)
+            
+            # Skip very early lines (usually state/license type)
+            if i < 1:
+                continue
+                
+            # Skip lines that are too late (usually after line 8)
+            if i > 8:
+                continue
+            
+            if self._looks_like_name_line_relaxed(line):
+                # Score based on position (earlier is better for names)
+                score = 10 - i  # Earlier lines get higher scores
+                
+                # Bonus for exactly 2 words (typical first + last name)
+                words = line.split()
+                if len(words) == 2:
+                    score += 5
+                
+                # Bonus for all alphabetic characters
+                if all(word.isalpha() for word in words):
+                    score += 3
+                
+                # Bonus for reasonable name length
+                if 4 <= len(line) <= 30:
+                    score += 2
+                
+                potential_names.append((line, score))
         
-        # Try to find the best name candidate
-        # Prefer lines that look most like names (2 words, all alpha)
-        potential_names.sort(key=lambda x: (
-            len(x.split()) == 2,  # Prefer exactly 2 words
-            all(word.isalpha() for word in x.split()),  # Prefer all alphabetic
-            len(x)  # Prefer reasonable length
-        ), reverse=True)
+        # Sort by score (highest first)
+        potential_names.sort(key=lambda x: x[1], reverse=True)
         
-        for name_line in potential_names:
-            if self._is_valid_name(name_line):
+        # Try the best candidates
+        for name_line, score in potential_names:
+            if self._is_basic_valid_name(name_line):
                 return self._parse_name(name_line)
         
+        # Method 3: Look for common name patterns in the raw text
+        common_name_patterns = [
+            r'\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b',  # Capitalized first and last name
+            r'\b([A-Z]{2,}\s+[A-Z]{2,})\b',      # All caps first and last name
+        ]
+        
+        for pattern in common_name_patterns:
+            matches = re.findall(pattern, text)  # Use original case text
+            for match in matches:
+                if self._is_basic_valid_name(match.upper()):
+                    return self._parse_name(match.upper())
+        
         return None, None
+    
+    def _looks_like_name_line_relaxed(self, line: str) -> bool:
+        """More relaxed check if a line looks like it contains a name"""
+        if not line or len(line) < 3:
+            return False
+        
+        # Skip lines that are obviously not names
+        obvious_non_names = {
+            'CONNECTICUT', 'CALIFORNIA', 'TEXAS', 'FLORIDA', 'NEW YORK',
+            'DRIVER LICENSE', 'DRIVERS LICENSE', 'CLASS D', 'CLASS C',
+            'EXPIRES:', 'DOB:', 'LIC#', 'LICENSE#', 'ID#'
+        }
+        
+        if line in obvious_non_names:
+            return False
+        
+        # Skip lines that start with obvious keywords
+        if line.startswith(('DOB:', 'LIC#', 'LICENSE:', 'CLASS', 'EXPIRES:', 'ADDRESS')):
+            return False
+        
+        # Skip lines that are mostly numbers
+        digit_count = sum(1 for c in line if c.isdigit())
+        if digit_count > len(line) * 0.4:
+            return False
+        
+        # Must be mostly alphabetic (at least 70%)
+        alpha_count = sum(1 for c in line if c.isalpha())
+        if alpha_count < len(line) * 0.7:
+            return False
+        
+        # Should have reasonable word count (allow up to 4 for middle names/initials)
+        words = line.split()
+        if len(words) < 1 or len(words) > 4:
+            return False
+        
+        # Each word should be reasonable for a name
+        for word in words:
+            if len(word) < 1:  # Allow single letter middle initials
+                return False
+            # Skip words that are too long to be names
+            if len(word) > 15:
+                return False
+        
+        return True
+    
+    def _is_basic_valid_name(self, name_text: str) -> bool:
+        """Basic validation for names - less strict than the full validation"""
+        if not name_text or len(name_text) < 2:
+            return False
+        
+        # Must contain at least one letter
+        if not re.search(r'[A-Z]', name_text):
+            return False
+        
+        # Should not be too long
+        if len(name_text) > 40:
+            return False
+        
+        # Should not contain numbers
+        if re.search(r'\d', name_text):
+            return False
+        
+        # Should have reasonable word count (allow up to 4 for middle names)
+        words = name_text.split()
+        if len(words) < 1 or len(words) > 4:
+            return False
+        
+        # Each word should be at least 1 character (allow middle initials)
+        for word in words:
+            if len(word) < 1:
+                return False
+        
+        # Skip obvious license-related terms
+        license_terms = {
+            'LICENSE', 'DRIVER', 'CLASS', 'EXPIRES', 'DOB', 'LIC', 'ID',
+            'CONNECTICUT', 'CALIFORNIA', 'TEXAS', 'FLORIDA', 'DOCUMENT'
+        }
+        
+        # Check if any word is a license term
+        for word in words:
+            if word in license_terms:
+                return False
+        
+        # Should not be all the same character
+        if len(set(name_text.replace(' ', ''))) <= 1:
+            return False
+        
+        return True
     
     def _looks_like_name_line(self, line: str) -> bool:
         """Check if a line looks like it contains a name"""
@@ -383,38 +627,57 @@ class DriversLicenseScanner:
             'HEIGHT', 'WEIGHT', 'EYES', 'HAIR', 'SEX', 'RESTRICTIONS', 'ADDRESS',
             'CITY', 'STATE', 'ZIP', 'COUNTRY', 'VETERAN', 'ORGAN', 'DONOR',
             'CONNECTICUT', 'CALIFORNIA', 'TEXAS', 'FLORIDA', 'NEW YORK', 'DOB',
-            'LIC#', 'LIC', 'ID#', 'NUMBER', 'FULL', 'NAME:', 'EXPIRES:', 'BORN'
+            'LIC#', 'LIC', 'ID#', 'NUMBER', 'FULL', 'NAME:', 'EXPIRES:', 'BORN',
+            'SIGNATURE', 'PHOTO', 'DOCUMENT', 'IDENTIFICATION', 'CARD', 'VALID',
+            'UNTIL', 'RENEWAL', 'FEE', 'PAID', 'DUPLICATE', 'ORIGINAL',
+            'CORRECTIVE', 'LENSES', 'REQUIRED', 'NONE', 'BROWN', 'BLUE',
+            'GREEN', 'HAZEL', 'BLACK', 'BLONDE', 'RED', 'AUBURN', 'GRAY',
+            'WHITE', 'BALD', 'UNKNOWN', 'MALE', 'FEMALE', 'ENDORSEMENTS'
         }
         
         # Check if line contains any skip keywords
         line_words = line.split()
         for word in line_words:
-            if word.rstrip(':') in skip_keywords:
+            clean_word = word.rstrip(':').rstrip('#')
+            if clean_word in skip_keywords:
                 return False
         
         # Skip lines that are mostly numbers
         digit_count = sum(1 for c in line if c.isdigit())
-        if digit_count > len(line) * 0.5:
+        if digit_count > len(line) * 0.3:  # More strict - max 30% digits
             return False
         
-        # Skip lines with special characters (except spaces and common punctuation)
+        # Skip lines with special characters (except spaces, hyphens, and periods)
         if re.search(r'[^A-Z\s\-\.]', line):
             return False
         
-        # Must be mostly alphabetic
+        # Must be mostly alphabetic (at least 80%)
         alpha_count = sum(1 for c in line if c.isalpha())
-        if alpha_count < len(line) * 0.7:
+        if alpha_count < len(line) * 0.8:
             return False
         
-        # Should look like a reasonable name (2-4 words, each 2+ characters)
+        # Should look like a reasonable name (1-3 words, each 2+ characters)
         words = line.split()
-        if len(words) < 1 or len(words) > 4:
+        if len(words) < 1 or len(words) > 3:
             return False
         
         # Each word should be at least 2 characters and look like a name part
         for word in words:
             if len(word) < 2 or not word.isalpha():
                 return False
+            
+            # Skip words that are too long to be names (probably not a name)
+            if len(word) > 15:
+                return False
+        
+        # Prefer lines with exactly 2 words (first + last name)
+        if len(words) == 2:
+            return True
+        
+        # Single word could be a name, but be more cautious
+        if len(words) == 1:
+            # Single word should be reasonable length for a name
+            return 3 <= len(words[0]) <= 12
         
         return True
     
@@ -427,17 +690,60 @@ class DriversLicenseScanner:
         if not re.search(r'[A-Z]', name_text):
             return False
         
-        # Should not be too long (names are typically under 50 characters)
-        if len(name_text) > 50:
+        # Should not be too long (names are typically under 40 characters)
+        if len(name_text) > 40:
             return False
         
         # Should not contain numbers
         if re.search(r'\d', name_text):
             return False
         
-        # Should have reasonable word count (1-4 words for first/last name)
+        # Should have reasonable word count (1-3 words for first/last name)
         words = name_text.split()
-        if len(words) < 1 or len(words) > 4:
+        if len(words) < 1 or len(words) > 3:
+            return False
+        
+        # Each word should be at least 2 characters
+        for word in words:
+            if len(word) < 2:
+                return False
+        
+        # Common false positives to exclude
+        false_positives = {
+            'LICENSE', 'DRIVER', 'CLASS', 'EXPIRES', 'ISSUED', 'BIRTH', 'DATE',
+            'HEIGHT', 'WEIGHT', 'EYES', 'HAIR', 'SEX', 'MALE', 'FEMALE',
+            'RESTRICTIONS', 'ENDORSEMENTS', 'VETERAN', 'ORGAN', 'DONOR',
+            'ADDRESS', 'CITY', 'STATE', 'ZIP', 'COUNTRY', 'USA', 'UNITED',
+            'STATES', 'AMERICA', 'DEPARTMENT', 'MOTOR', 'VEHICLES', 'DMV',
+            'CONNECTICUT', 'CALIFORNIA', 'TEXAS', 'FLORIDA', 'NEW YORK',
+            'PENNSYLVANIA', 'ILLINOIS', 'MICHIGAN', 'OHIO', 'GEORGIA',
+            'NORTH CAROLINA', 'WASHINGTON', 'VIRGINIA', 'MARYLAND',
+            'SIGNATURE', 'PHOTO', 'DOCUMENT', 'IDENTIFICATION', 'CARD',
+            'VALID', 'UNTIL', 'RENEWAL', 'FEE', 'PAID', 'DUPLICATE',
+            'ORIGINAL', 'CORRECTIVE', 'LENSES', 'REQUIRED', 'NONE',
+            'BROWN', 'BLUE', 'GREEN', 'HAZEL', 'BLACK', 'BLONDE', 'RED',
+            'AUBURN', 'GRAY', 'WHITE', 'BALD', 'UNKNOWN'
+        }
+        
+        # Check if the entire name text is a false positive
+        if name_text in false_positives:
+            return False
+        
+        # Check if any word is a common false positive
+        for word in words:
+            if word in false_positives:
+                return False
+        
+        # Names should not be all the same character
+        if len(set(name_text.replace(' ', ''))) <= 1:
+            return False
+        
+        # Should not look like a date pattern
+        if re.match(r'^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$', name_text):
+            return False
+        
+        # Should not look like a license number pattern
+        if re.match(r'^[A-Z0-9]{6,15}$', name_text.replace(' ', '')):
             return False
         
         return True
@@ -462,6 +768,9 @@ class DriversLicenseScanner:
         """
         Extract date of birth from license text
         
+        Driver's licenses use field code 7 for date of birth.
+        Falls back to pattern matching if field code not found.
+        
         Args:
             text: Extracted text from license
             
@@ -469,7 +778,35 @@ class DriversLicenseScanner:
             Date of birth string if found, None otherwise
         """
         text_upper = text.upper()
+        lines = text_upper.split('\n')
         
+        # Method 1: Look for field code 7 (most reliable for DOB)
+        for line in lines:
+            line = line.strip()
+            
+            # Check for field 7 (date of birth) - same line
+            if re.search(r'\b7[:\s]', line):
+                match = re.search(r'\b7[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})', line)
+                if match:
+                    date_str = match.group(1)
+                    if self._is_valid_date(date_str):
+                        return self._normalize_date(date_str)
+        
+        # Method 2: Look for field 7 on separate lines
+        for i, line in enumerate(lines):
+            line = line.strip()
+            
+            if line == '7' and i + 1 < len(lines):
+                # Check next line for date
+                next_line = lines[i + 1].strip()
+                if next_line and self._is_valid_date(next_line):
+                    return self._normalize_date(next_line)
+        
+        # Method 3: Fallback to pattern-based extraction
+        return self._extract_dob_fallback(text_upper)
+    
+    def _extract_dob_fallback(self, text_upper: str) -> Optional[str]:
+        """Fallback DOB extraction using patterns"""
         # Common DOB patterns and prefixes
         dob_patterns = [
             r'DOB[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
