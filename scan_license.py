@@ -35,6 +35,9 @@ def main():
             print(f"✅ Scan successful!")
             print(f"License Number: {result['license_number'] or 'Not found'}")
             print(f"State: {result['state'] or 'Not found'}")
+            print(f"First Name: {result['first_name'] or 'Not found'}")
+            print(f"Last Name: {result['last_name'] or 'Not found'}")
+            print(f"Date of Birth: {result['date_of_birth'] or 'Not found'}")
             print(f"Confidence: {result['confidence_score']:.2%}")
         else:
             print(f"❌ Scan failed: {result['error']}")

@@ -47,9 +47,10 @@ HTML_TEMPLATE = """
         <ol>
             <li>Take a clear photo of a US driver's license</li>
             <li>Upload the image using the form below</li>
-            <li>The scanner will extract the license number and state</li>
+            <li>The scanner will extract license number, state, names, and date of birth</li>
         </ol>
         <p><strong>Supported:</strong> All 50 US states + DC</p>
+        <p><strong>Extracts:</strong> License number, state, first name, last name, date of birth</p>
         <p><strong>Privacy:</strong> Images are processed locally and not stored</p>
     </div>
     
@@ -105,6 +106,9 @@ HTML_TEMPLATE = """
                             <h4>✅ Scan Results</h4>
                             <p><strong>License Number:</strong> ${result.license_number || 'Not found'}</p>
                             <p><strong>State:</strong> ${result.state || 'Not found'}</p>
+                            <p><strong>First Name:</strong> ${result.first_name || 'Not found'}</p>
+                            <p><strong>Last Name:</strong> ${result.last_name || 'Not found'}</p>
+                            <p><strong>Date of Birth:</strong> ${result.date_of_birth || 'Not found'}</p>
                             <p><strong>Confidence:</strong> ${(result.confidence_score * 100).toFixed(1)}%</p>
                         </div>
                     `;

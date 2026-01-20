@@ -24,6 +24,9 @@ class LicenseInfo:
     """Data class for driver's license information"""
     license_number: Optional[str] = None
     state: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
     confidence_score: float = 0.0
     raw_text: str = ""
 
@@ -308,6 +311,273 @@ class DriversLicenseScanner:
         
         return True
     
+    def extract_names(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Extract first name and last name from license text
+        
+        Args:
+            text: Extracted text from license
+            
+        Returns:
+            Tuple of (first_name, last_name) if found, (None, None) otherwise
+        """
+        text_upper = text.upper()
+        lines = text_upper.split('\n')
+        
+        # Common name patterns and prefixes
+        name_patterns = [
+            r'NAME[:\s]+([A-Z\s]+?)(?:\n|$)',
+            r'FULL\s*NAME[:\s]+([A-Z\s]+?)(?:\n|$)',
+            r'DRIVER[:\s]+([A-Z\s]+?)(?:\n|$)',
+            r'LICENSEE[:\s]+([A-Z\s]+?)(?:\n|$)',
+        ]
+        
+        # Look for explicit name patterns first
+        for pattern in name_patterns:
+            matches = re.findall(pattern, text_upper, re.MULTILINE)
+            if matches:
+                name_text = matches[0].strip()
+                # Remove any trailing keywords that might have been captured
+                name_words = name_text.split()
+                clean_words = []
+                for word in name_words:
+                    if word not in {'LIC', 'LICENSE', 'DOB', 'CLASS', 'EXPIRES', 'STATE', 'CT', 'CA', 'TX', 'FL', 'NY'}:
+                        clean_words.append(word)
+                    else:
+                        break  # Stop at first keyword
+                
+                if clean_words and self._is_valid_name(' '.join(clean_words)):
+                    return self._parse_name(' '.join(clean_words))
+        
+        # Look for name-like patterns in lines
+        # Names are typically on lines with mostly alphabetic characters
+        potential_names = []
+        
+        for line in lines:
+            line = line.strip()
+            if self._looks_like_name_line(line):
+                potential_names.append(line)
+        
+        # Try to find the best name candidate
+        # Prefer lines that look most like names (2 words, all alpha)
+        potential_names.sort(key=lambda x: (
+            len(x.split()) == 2,  # Prefer exactly 2 words
+            all(word.isalpha() for word in x.split()),  # Prefer all alphabetic
+            len(x)  # Prefer reasonable length
+        ), reverse=True)
+        
+        for name_line in potential_names:
+            if self._is_valid_name(name_line):
+                return self._parse_name(name_line)
+        
+        return None, None
+    
+    def _looks_like_name_line(self, line: str) -> bool:
+        """Check if a line looks like it contains a name"""
+        if not line or len(line) < 3:
+            return False
+        
+        # Skip lines with common license keywords
+        skip_keywords = {
+            'LICENSE', 'DRIVER', 'CLASS', 'EXPIRES', 'ISSUED', 'BIRTH', 'DATE',
+            'HEIGHT', 'WEIGHT', 'EYES', 'HAIR', 'SEX', 'RESTRICTIONS', 'ADDRESS',
+            'CITY', 'STATE', 'ZIP', 'COUNTRY', 'VETERAN', 'ORGAN', 'DONOR',
+            'CONNECTICUT', 'CALIFORNIA', 'TEXAS', 'FLORIDA', 'NEW YORK', 'DOB',
+            'LIC#', 'LIC', 'ID#', 'NUMBER', 'FULL', 'NAME:', 'EXPIRES:', 'BORN'
+        }
+        
+        # Check if line contains any skip keywords
+        line_words = line.split()
+        for word in line_words:
+            if word.rstrip(':') in skip_keywords:
+                return False
+        
+        # Skip lines that are mostly numbers
+        digit_count = sum(1 for c in line if c.isdigit())
+        if digit_count > len(line) * 0.5:
+            return False
+        
+        # Skip lines with special characters (except spaces and common punctuation)
+        if re.search(r'[^A-Z\s\-\.]', line):
+            return False
+        
+        # Must be mostly alphabetic
+        alpha_count = sum(1 for c in line if c.isalpha())
+        if alpha_count < len(line) * 0.7:
+            return False
+        
+        # Should look like a reasonable name (2-4 words, each 2+ characters)
+        words = line.split()
+        if len(words) < 1 or len(words) > 4:
+            return False
+        
+        # Each word should be at least 2 characters and look like a name part
+        for word in words:
+            if len(word) < 2 or not word.isalpha():
+                return False
+        
+        return True
+    
+    def _is_valid_name(self, name_text: str) -> bool:
+        """Validate if text looks like a valid name"""
+        if not name_text or len(name_text) < 2:
+            return False
+        
+        # Must contain at least one letter
+        if not re.search(r'[A-Z]', name_text):
+            return False
+        
+        # Should not be too long (names are typically under 50 characters)
+        if len(name_text) > 50:
+            return False
+        
+        # Should not contain numbers
+        if re.search(r'\d', name_text):
+            return False
+        
+        # Should have reasonable word count (1-4 words for first/last name)
+        words = name_text.split()
+        if len(words) < 1 or len(words) > 4:
+            return False
+        
+        return True
+    
+    def _parse_name(self, name_text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Parse name text into first and last name"""
+        words = name_text.strip().split()
+        
+        if len(words) == 1:
+            # Only one word - could be first or last name
+            return words[0], None
+        elif len(words) == 2:
+            # Two words - assume first and last
+            return words[0], words[1]
+        elif len(words) >= 3:
+            # Three or more words - assume first word is first name, last word is last name
+            return words[0], words[-1]
+        
+        return None, None
+    
+    def extract_date_of_birth(self, text: str) -> Optional[str]:
+        """
+        Extract date of birth from license text
+        
+        Args:
+            text: Extracted text from license
+            
+        Returns:
+            Date of birth string if found, None otherwise
+        """
+        text_upper = text.upper()
+        
+        # Common DOB patterns and prefixes
+        dob_patterns = [
+            r'DOB[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
+            r'DATE\s*OF\s*BIRTH[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
+            r'BIRTH[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
+            r'BORN[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
+            r'D\.?O\.?B\.?[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})',
+        ]
+        
+        # Look for explicit DOB patterns
+        for pattern in dob_patterns:
+            matches = re.findall(pattern, text_upper)
+            if matches:
+                date_str = matches[0]
+                if self._is_valid_date(date_str):
+                    return self._normalize_date(date_str)
+        
+        # Look for date patterns that might be DOB (without explicit labels)
+        # Common date formats
+        date_formats = [
+            r'\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\b',  # MM/DD/YYYY or MM-DD-YYYY
+            r'\b(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b',  # YYYY/MM/DD or YYYY-MM-DD
+        ]
+        
+        potential_dates = []
+        for pattern in date_formats:
+            matches = re.findall(pattern, text_upper)
+            for match in matches:
+                if self._is_valid_date(match) and self._looks_like_birth_date(match):
+                    potential_dates.append(match)
+        
+        # Return the most likely birth date
+        if potential_dates:
+            return self._normalize_date(potential_dates[0])
+        
+        return None
+    
+    def _is_valid_date(self, date_str: str) -> bool:
+        """Validate if string looks like a valid date"""
+        if not date_str:
+            return False
+        
+        # Basic format check
+        if not re.match(r'\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}', date_str):
+            return False
+        
+        try:
+            # Try to parse the date to validate it
+            from datetime import datetime
+            
+            # Try different formats
+            formats = ['%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%Y-%m-%d']
+            
+            for fmt in formats:
+                try:
+                    parsed_date = datetime.strptime(date_str, fmt)
+                    # Check if it's a reasonable birth date (between 1900 and current year - 16)
+                    current_year = datetime.now().year
+                    if 1900 <= parsed_date.year <= current_year - 16:
+                        return True
+                except ValueError:
+                    continue
+            
+            return False
+        except:
+            return False
+    
+    def _looks_like_birth_date(self, date_str: str) -> bool:
+        """Check if date looks like it could be a birth date"""
+        try:
+            from datetime import datetime
+            
+            formats = ['%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%Y-%m-%d']
+            
+            for fmt in formats:
+                try:
+                    parsed_date = datetime.strptime(date_str, fmt)
+                    current_year = datetime.now().year
+                    
+                    # Birth date should be reasonable (16-120 years ago)
+                    age = current_year - parsed_date.year
+                    if 16 <= age <= 120:
+                        return True
+                except ValueError:
+                    continue
+            
+            return False
+        except:
+            return False
+    
+    def _normalize_date(self, date_str: str) -> str:
+        """Normalize date to MM/DD/YYYY format"""
+        try:
+            from datetime import datetime
+            
+            formats = ['%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%Y-%m-%d']
+            
+            for fmt in formats:
+                try:
+                    parsed_date = datetime.strptime(date_str, fmt)
+                    return parsed_date.strftime('%m/%d/%Y')
+                except ValueError:
+                    continue
+            
+            return date_str  # Return original if can't parse
+        except:
+            return date_str
+    
     def calculate_confidence(self, license_info: LicenseInfo) -> float:
         """
         Calculate confidence score based on extracted information
@@ -320,19 +590,31 @@ class DriversLicenseScanner:
         """
         score = 0.0
         
-        # State identification adds confidence
+        # State identification adds confidence (25%)
         if license_info.state:
-            score += 0.4
+            score += 0.25
         
-        # License number adds confidence
+        # License number adds confidence (35%)
         if license_info.license_number:
-            score += 0.4
+            score += 0.35
             
-            # Bonus for state-specific pattern match
+            # Bonus for state-specific pattern match (10%)
             if license_info.state and license_info.state in self.LICENSE_PATTERNS:
                 pattern = self.LICENSE_PATTERNS[license_info.state]
                 if re.match(pattern, license_info.license_number):
-                    score += 0.2
+                    score += 0.10
+        
+        # First name adds confidence (10%)
+        if license_info.first_name:
+            score += 0.10
+        
+        # Last name adds confidence (10%)
+        if license_info.last_name:
+            score += 0.10
+        
+        # Date of birth adds confidence (10%)
+        if license_info.date_of_birth:
+            score += 0.10
         
         return min(score, 1.0)
     
@@ -364,6 +646,12 @@ class DriversLicenseScanner:
                 extracted_text, license_info.state
             )
             
+            # Extract names
+            license_info.first_name, license_info.last_name = self.extract_names(extracted_text)
+            
+            # Extract date of birth
+            license_info.date_of_birth = self.extract_date_of_birth(extracted_text)
+            
             # Calculate confidence score
             license_info.confidence_score = self.calculate_confidence(license_info)
             
@@ -371,6 +659,9 @@ class DriversLicenseScanner:
                 'success': True,
                 'license_number': license_info.license_number,
                 'state': license_info.state,
+                'first_name': license_info.first_name,
+                'last_name': license_info.last_name,
+                'date_of_birth': license_info.date_of_birth,
                 'confidence_score': license_info.confidence_score,
                 'raw_text': license_info.raw_text
             }

@@ -1,16 +1,27 @@
 # US Driver's License Scanner Agent
 
-An AI-powered agent that scans US driver's licenses to extract license numbers and state information using AWS Textract OCR technology.
+An AI-powered agent that scans US driver's licenses to extract comprehensive information including license numbers, state, names, and date of birth using AWS Textract OCR technology.
 
 ## Features
 
 - 🔍 **OCR Processing**: Uses AWS Textract for accurate text extraction
 - 🗺️ **All US States**: Supports all 50 US states plus Washington DC
 - 🎯 **Pattern Matching**: State-specific license number pattern recognition
+- 👤 **Personal Information**: Extracts first name, last name, and date of birth
 - 📊 **Confidence Scoring**: Provides confidence scores for extracted data
 - 🌐 **Multiple Interfaces**: CLI, API, and web interface
 - 🔒 **Privacy Focused**: Images processed locally, not stored
 - ☁️ **Cloud Ready**: Can be deployed as AWS Lambda function
+
+## Extracted Information
+
+The scanner extracts the following information from driver's licenses:
+- **License Number**: State-specific format validation
+- **State**: Automatic state identification
+- **First Name**: Driver's first name
+- **Last Name**: Driver's last name  
+- **Date of Birth**: Formatted as MM/DD/YYYY
+- **Confidence Score**: Overall extraction confidence
 
 ## Supported States
 
@@ -64,27 +75,27 @@ All 50 US states plus Washington DC with state-specific license number patterns 
 
 Start the web service:
 ```bash
-python web_service.py
+python run_web_service.py
 ```
 
-Then open http://localhost:5000 in your browser to use the interactive web interface.
+Then open http://localhost:8080 in your browser to use the interactive web interface.
 
 ### Command Line Interface
 
 Scan a license image file:
 ```bash
-python license_scanner_api.py path/to/license_image.jpg
+python scan_license.py path/to/license_image.jpg
 ```
 
 Get JSON output:
 ```bash
-python license_scanner_api.py path/to/license_image.jpg --json
+python scan_license.py path/to/license_image.jpg --json
 ```
 
 ### Python API
 
 ```python
-from license_scanner_api import LicenseScannerAPI
+from src.license_scanner import LicenseScannerAPI
 
 # Initialize the API
 api = LicenseScannerAPI()
@@ -100,6 +111,9 @@ result = api.scan_from_bytes(image_bytes)
 
 print(f"License: {result['license_number']}")
 print(f"State: {result['state']}")
+print(f"First Name: {result['first_name']}")
+print(f"Last Name: {result['last_name']}")
+print(f"Date of Birth: {result['date_of_birth']}")
 print(f"Confidence: {result['confidence_score']:.2%}")
 ```
 
@@ -107,24 +121,24 @@ print(f"Confidence: {result['confidence_score']:.2%}")
 
 **Upload image file:**
 ```bash
-curl -X POST -F "image=@license.jpg" http://localhost:5000/scan
+curl -X POST -F "image=@license.jpg" http://localhost:8080/scan
 ```
 
 **Send base64 image:**
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{"image_data":"base64_encoded_image"}' \
-  http://localhost:5000/scan/base64
+  http://localhost:8080/scan/base64
 ```
 
 **Get supported states:**
 ```bash
-curl http://localhost:5000/states
+curl http://localhost:8080/states
 ```
 
 **Health check:**
 ```bash
-curl http://localhost:5000/health
+curl http://localhost:8080/health
 ```
 
 ## Response Format
@@ -134,8 +148,11 @@ curl http://localhost:5000/health
   "success": true,
   "license_number": "A1234567",
   "state": "CA",
-  "confidence_score": 0.8,
-  "raw_text": "CALIFORNIA\nDRIVER LICENSE\nA1234567\n..."
+  "first_name": "JOHN",
+  "last_name": "DOE", 
+  "date_of_birth": "01/15/1990",
+  "confidence_score": 0.9,
+  "raw_text": "CALIFORNIA\nDRIVER LICENSE\nJOHN DOE\nA1234567\n..."
 }
 ```
 
